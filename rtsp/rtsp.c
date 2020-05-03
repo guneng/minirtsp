@@ -1,10 +1,13 @@
+#include <fcntl.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stddef.h>
 #include <unistd.h>
+
 #include <errno.h>
 #include <sys/time.h>
+#include <pthread.h>
 
 #include <netdb.h>
 #include <sys/socket.h>
@@ -42,10 +45,6 @@
         tmp                          = rtp_list_container_of((pos)->member.next, tmp, member); \
          &pos->member != (head); pos = tmp, tmp = rtp_list_container_of(pos->member.next, tmp, member))
 
-#if !LWIP_POSIX_SOCKETS_IO_NAMES
-#define close lwip_close
-// extern int fcntl(int s, int cmd, int val);
-#endif
 
 enum
 {
@@ -110,7 +109,7 @@ struct client_context
     int find_i_frame;
     void *session;
     int (*process_func)(struct client_context *ctx);
-    rt_thread_t thread_id;
+    pthread_t thread_id;
     struct list_t link;
 };
 
@@ -118,12 +117,12 @@ struct rtsp_server_context
 {
     int stop;
     int sd;
-    rt_thread_t thread_id;
+    pthread_t thread_id;
     int port;
     void (*init_client)(struct client_context *ctx);
     void (*release_client)(struct client_context *ctx);
     struct rtp_info rtp_info;
-    struct rt_semaphore client_list_lock;
+    pthread_mutex_t client_list_lock;
     struct list_t client_list;
 };
 
@@ -338,7 +337,7 @@ void send_to_clients(struct rtsp_server_context *server, struct rtp_packet *pkt)
     struct client_context *client, *next;
     char *p = pkt->buf + pkt->header_len;
 
-    rt_sem_take(&server->client_list_lock, RT_WAITING_FOREVER);
+    pthread_mutex_lock(&server->client_list_lock);
     rtp_list_for_each_safe(client, next, &server->client_list, link)
     {
         if (client)
@@ -359,7 +358,7 @@ void send_to_clients(struct rtsp_server_context *server, struct rtp_packet *pkt)
             }
         }
     }
-    rt_sem_release(&server->client_list_lock);
+    pthread_mutex_unlock(&server->client_list_lock);
 }
 
 void generate_rtp_packets_and_send(struct rtsp_server_context *server, struct list_t *pkt_list, void *data, int size,
@@ -428,7 +427,7 @@ void generate_rtp_packets_and_send(struct rtsp_server_context *server, struct li
     }
 }
 
-void client_thread_proc(void *arg)
+void *client_thread_proc(void *arg)
 {
     struct client_context *client_ctx = (struct client_context *)arg;
 
@@ -438,9 +437,9 @@ void client_thread_proc(void *arg)
         {
             if (client_ctx->process_func(client_ctx) < 0)
             {
-                rt_sem_take(&client_ctx->server->client_list_lock, RT_WAITING_FOREVER);
+                pthread_mutex_lock(&client_ctx->server->client_list_lock);
                 rtp_list_del(&client_ctx->link);
-                rt_sem_release(&client_ctx->server->client_list_lock);
+                pthread_mutex_unlock(&client_ctx->server->client_list_lock);
                 close(client_ctx->fd);
                 if (client_ctx->server->release_client)
                     client_ctx->server->release_client(client_ctx);
@@ -451,7 +450,7 @@ void client_thread_proc(void *arg)
     }
 }
 
-void rtp_tcp_server_thread(void *arg)
+void *rtp_tcp_server_thread(void *arg)
 {
     struct rtsp_server_context *server_ctx = (struct rtsp_server_context *)arg;
     struct sockaddr_in addr;
@@ -459,19 +458,14 @@ void rtp_tcp_server_thread(void *arg)
     socklen_t addr_len = sizeof(struct sockaddr_in);
     struct client_context *client_ctx;
     int fd;
-    char client_thread_name[32];
-
-    if (rt_sem_init(&server_ctx->client_list_lock, "client_list_lock", 1, RT_IPC_FLAG_FIFO) != 0)
-    {
-        debug("Error: create mutex lock failed\n");
-        return;
-    }
+    int ret = 0;
+    pthread_mutex_init(&server_ctx->client_list_lock, NULL);
 
     server_ctx->sd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_ctx->sd < 0)
     {
         debug("create server socket failed\n");
-        return;
+        return NULL;
     }
 
     /* ignore "socket already in use" errors */
@@ -488,13 +482,13 @@ void rtp_tcp_server_thread(void *arg)
     if (bind(server_ctx->sd, (struct sockaddr *)&addr, sizeof(addr)) != 0)
     {
         debug("Unable to bind\n");
-        return;
+        return NULL;
     }
 
     if (listen(server_ctx->sd, MAX_CLIENT_COUNT) != 0)
     {
         debug("Listen error\n");
-        return;
+        return NULL;
     }
 
     while (!server_ctx->stop)
@@ -518,11 +512,10 @@ void rtp_tcp_server_thread(void *arg)
             if (server_ctx->init_client)
                 server_ctx->init_client(client_ctx);
             rtp_list_add(server_ctx->client_list.prev, &client_ctx->link);
-            snprintf(client_thread_name, 32, "client_%d", client_ctx->fd);
-            client_ctx->thread_id = rt_thread_create(client_thread_name, client_thread_proc, client_ctx,
-                                                     RTSP_THREAD_STACK_SIZE, RTSP_THREAD_PRIORITY, RTSP_THREAD_TIMESLICE);
-            if (client_ctx->thread_id != NULL)
-                rt_thread_startup(client_ctx->thread_id);
+            ret = pthread_create(&client_ctx->thread_id, NULL, client_thread_proc, client_ctx);
+            if (ret < 0) {
+                free(client_ctx);
+            }
         }
     }
     close(server_ctx->sd);
@@ -572,8 +565,8 @@ void server_cleanup(struct rtsp_server_context *server)
     {
         if (client)
         {
-            if (client->thread_id != NULL)
-                rt_thread_delete(client->thread_id);
+            if (client->thread_id > 0)
+                pthread_cancel(client->thread_id);
             if (server->release_client)
                 server->release_client(client);
             rtp_list_del(&client->link);
@@ -596,7 +589,7 @@ void server_cleanup(struct rtsp_server_context *server)
         close(server->rtp_info.udp_send_socket);
     }
     free(server->rtp_info.pool.buf);
-    rt_sem_detach(&server->client_list_lock);
+    pthread_mutex_destroy(&server->client_list_lock);
     free(server);
     server = NULL;
 }
@@ -820,7 +813,7 @@ void cleanup_rtsp_session(struct client_context *client)
 struct rtsp_server_context *rtsp_start_server(enum rtp_transport transport, int port)
 {
     struct rtsp_server_context *server;
-    char thread_name[32];
+    int ret = 0;
 
     server = malloc(sizeof(struct rtsp_server_context));
     if (server == NULL)
@@ -853,15 +846,9 @@ struct rtsp_server_context *rtsp_start_server(enum rtp_transport transport, int 
     server->port           = port;
     server->init_client    = init_rtsp_session;
     server->release_client = cleanup_rtsp_session;
-    
-    snprintf(thread_name, 32, "rtsp_server:%d", port);
-    server->thread_id = rt_thread_create(thread_name, rtp_tcp_server_thread, server, RTSP_THREAD_STACK_SIZE,
-                                         RTSP_THREAD_PRIORITY, RTSP_THREAD_TIMESLICE);
-    if (server->thread_id != NULL)
-    {
-        rt_thread_startup(server->thread_id);
-    }
-    else
+
+    ret = pthread_create(&server->thread_id, NULL, rtp_tcp_server_thread, server);
+    if (ret < 0)
     {
         debug("rtsp: failed to create rtsp server thread\n");
         free(server);
@@ -877,10 +864,10 @@ void rtsp_stop_server(struct rtsp_server_context *server)
 
     server->stop = 1;
 
-    if (server->thread_id != NULL)
+    if (server->thread_id > 0)
     {
         debug("rtsp: delete server thread\n");
-        rt_thread_delete(server->thread_id);
+        pthread_cancel(server->thread_id);
     }
     server_cleanup(server);
 }

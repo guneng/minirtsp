@@ -64,13 +64,13 @@ struct list_t
 
 struct sdp_info
 {
-    char sps[32];
+    char sps[128];
     int sps_len;
     int has_sps;
-    char pps[32];
+    char pps[128];
     int pps_len;
     int has_pps;
-    char content[1024];
+    char content[8192];
     int len;
 };
 
@@ -230,10 +230,12 @@ static void base64_encode(char *dst, char *src, int len)
 
 void generate_sdp(struct sdp_info *sdp)
 {
-    char tmp[64];
+    char tmp[256];
 
     if (!sdp->has_sps || !sdp->has_pps)
         return;
+
+    memset(sdp->content, '\0', sizeof(sdp->content));
 
     sdp->content[0] = 0;
 
@@ -251,6 +253,7 @@ void generate_sdp(struct sdp_info *sdp)
     base64_encode(tmp, sdp->pps, sdp->pps_len);
     strcat(sdp->content, tmp);
     strcat(sdp->content, "\r\n");
+
     sdp->len = strlen(sdp->content);
 }
 
@@ -609,6 +612,8 @@ void generate_response_header(struct rtsp_session *session)
 
 void send_response(int fd, void *buffer, int size)
 {
+    printf("%s:[%s]\n", __func__, buffer);
+
     send(fd, buffer, size, 0);
 }
 
@@ -750,6 +755,12 @@ int rtsp_get_request(struct rtsp_session *session)
     return msg_type;
 }
 
+void (*g_event_cb)(int event);
+void rtsp_set_event_cb(void (*cb)(int event))
+{
+    g_event_cb = cb;
+}
+
 int rtsp_message_process(struct rtsp_session *session)
 {
     int type;
@@ -763,18 +774,23 @@ int rtsp_message_process(struct rtsp_session *session)
     {
     case RTSP_MSG_OPTIONS:
         rtsp_handle_options(session);
+        g_event_cb(0);
         break;
     case RTSP_MSG_DESCRIBE:
         rtsp_handle_describe(session);
+        g_event_cb(1);
         break;
     case RTSP_MSG_SETUP:
         rtsp_handle_setup(session);
+        g_event_cb(2);
         break;
     case RTSP_MSG_PLAY:
         rtsp_handle_play(session);
+        g_event_cb(3);
         break;
     case RTSP_MSG_TEARDOWN:
         session->ctx->start_play = 0;
+        g_event_cb(4);
         return -1;
     }
     return 0;

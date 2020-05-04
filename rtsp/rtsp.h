@@ -17,6 +17,8 @@ enum rtp_transport
 
 struct rtsp_server_context;
 
+void rtsp_set_event_cb(void (*cb)(int event));
+
 struct rtsp_server_context *rtsp_start_server(enum rtp_transport transport, int port);
 void rtsp_stop_server(struct rtsp_server_context *server);
 void rtp_push_data(struct rtsp_server_context *server, void *data, int size, unsigned long long pts);

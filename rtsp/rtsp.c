@@ -159,8 +159,8 @@ void rtp_list_del(struct list_t *elm)
 
 void init_packet_pool(struct rtp_info *info)
 {
-    info->pool.buf = malloc(512 * 1024);
-    info->pool.len = 512 * 1024;
+    info->pool.buf = malloc(4096);
+    info->pool.len = 4096;
     info->pool.pos = 0;
 }
 
@@ -175,7 +175,7 @@ struct rtp_packet *get_packet_from_pool(struct rtp_info *info)
     struct rtp_packet *pkt;
 
     ptr = info->pool.buf + info->pool.pos;
-    info->pool.pos += sizeof(struct rtp_packet);
+    //info->pool.pos += sizeof(struct rtp_packet);
     memset(ptr, 0, sizeof(struct rtp_packet));
     pkt = (struct rtp_packet *)ptr;
 

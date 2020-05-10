@@ -28,8 +28,8 @@
 #else
 #define MAX_CLIENT_COUNT 10
 #endif
-#define REQUEST_READ_BUF_SIZE 256
-#define RESPONSE_BUF_SIZE 1024
+#define REQUEST_READ_BUF_SIZE 1024
+#define RESPONSE_BUF_SIZE 4096
 #define RTP_UDP_SEND_PORT 3056
 #define RTSP_THREAD_PRIORITY (RT_THREAD_PRIORITY_MAX >> 1)
 #define RTSP_THREAD_STACK_SIZE 1024
@@ -46,6 +46,11 @@
     for (pos = rtp_list_container_of((head)->next, pos, member),      \
         tmp = rtp_list_container_of((pos)->member.next, tmp, member); \
          &pos->member != (head); pos = tmp, tmp = rtp_list_container_of(pos->member.next, tmp, member))
+
+enum rtp_transport {
+    RTP_TRANSPORT_UDP,
+    RTP_TRANSPORT_TCP
+};
 
 enum {
     RTSP_MSG_NULL,
@@ -65,6 +70,7 @@ struct rtp_packet {
     char buf[RTP_PACKET_MAX_SIZE];
     int len;
     int header_len;
+    enum rtp_transport transport;
     struct list_t link;
 };
 
@@ -79,12 +85,12 @@ struct rtp_info {
     unsigned long ssrc;
     struct sdp_info sdp;
     struct pkt_pool pool;
-    enum rtp_transport transport;
     int udp_send_socket;
 };
 
 struct client_context {
     struct rtsp_server_context* server;
+    enum rtp_transport transport;
     int fd;
     struct sockaddr_in addr;
     int udp_send_port;
@@ -221,7 +227,7 @@ int _send(int fd, void* buf, int len)
 
 void send_stream(struct client_context* client, struct rtp_packet* pkt)
 {
-    if (client->server->rtp_info.transport == RTP_TRANSPORT_UDP) {
+    if (client->transport == RTP_TRANSPORT_UDP) {
         client->addr.sin_port = htons(client->udp_send_port);
         sendto(client->server->rtp_info.udp_send_socket, pkt->buf, pkt->len, 0, (struct sockaddr*)&client->addr,
             sizeof(struct sockaddr_in));
@@ -239,7 +245,7 @@ void send_to_clients(struct rtsp_server_context* server, struct rtp_packet* pkt)
     rtp_list_for_each_safe(client, next, &server->client_list, link)
     {
         if (client) {
-            if (client->start_play) {
+            if (client->start_play && pkt->transport == client->transport) {
                 if (server->port != 0 && client->find_i_frame == 0) { /* using RTSP */
                     if ((p[4] & 0x1f) == 5) /* I frame */
                     {
@@ -261,24 +267,26 @@ void generate_rtp_packets_and_send(struct rtsp_server_context* server, struct li
     char* nal;
     int nal_len;
     struct rtp_packet* pkt;
-    int header_offset, max_len;
+    int tcp_header_offset, tcp_max_len;
+    int udp_header_offset, udp_max_len;
 
     if (pkt_list->next != pkt_list)
         return;
 
-    if (server->rtp_info.transport == RTP_TRANSPORT_TCP) {
-        header_offset = 16;
-        max_len = TCP_MSS;
-    } else {
-        header_offset = 12;
-        max_len = RTP_PACKET_MAX_SIZE;
-    }
+    //if (server->rtp_info.transport == RTP_TRANSPORT_TCP) {
+    tcp_header_offset = 16;
+    tcp_max_len = TCP_MSS;
+    //} else
+    //{
+    udp_header_offset = 12;
+    udp_max_len = RTP_PACKET_MAX_SIZE;
+    //}
 
     nal = data + 4;
     nal_len = size - 4;
 
-    if (nal_len > max_len - header_offset) {
-        int fragment_len = max_len - header_offset - 2;
+    if (nal_len > tcp_max_len - tcp_header_offset) { // only for rtp over tcp
+        int fragment_len = tcp_max_len - tcp_header_offset - 2;
         int pkt_num, i;
         int fu_len = fragment_len;
         char* fu_buf;
@@ -293,12 +301,13 @@ void generate_rtp_packets_and_send(struct rtsp_server_context* server, struct li
                 fu_len = nal_len - 1 - i * fragment_len;
             server->rtp_info.sequence_num++;
             pkt->header_len = generate_rtp_header(pkt->buf, fu_len + 2, i == pkt_num - 1, server->rtp_info.sequence_num,
-                pts, server->rtp_info.ssrc, server->rtp_info.transport);
-            fu_buf = pkt->buf + header_offset;
+                pts, server->rtp_info.ssrc, RTP_TRANSPORT_TCP);
+            fu_buf = pkt->buf + tcp_header_offset;
             fu_buf[0] = 0x00 | (nal[0] & 0x60) | 28;
             fu_buf[1] = (i == 0 ? 0x80 : 0x00) | ((i == pkt_num - 1) ? 0x40 : 0x00) | (nal[0] & 0x1f);
             memcpy(fu_buf + 2, nal + 1 + i * fragment_len, fu_len);
-            pkt->len = header_offset + 2 + fu_len;
+            pkt->len = tcp_header_offset + 2 + fu_len;
+            pkt->transport = RTP_TRANSPORT_TCP;
             rtp_list_add(pkt_list->prev, &pkt->link);
             send_to_clients(server, pkt);
         }
@@ -306,9 +315,48 @@ void generate_rtp_packets_and_send(struct rtsp_server_context* server, struct li
         server->rtp_info.sequence_num++;
         pkt = get_packet_from_pool(&server->rtp_info);
         pkt->header_len = generate_rtp_header(pkt->buf, nal_len, 0, server->rtp_info.sequence_num, pts,
-            server->rtp_info.ssrc, server->rtp_info.transport);
-        memcpy(pkt->buf + header_offset, nal, nal_len);
-        pkt->len = header_offset + nal_len;
+            server->rtp_info.ssrc, RTP_TRANSPORT_TCP);
+        memcpy(pkt->buf + tcp_header_offset, nal, nal_len);
+        pkt->len = tcp_header_offset + nal_len;
+        pkt->transport = RTP_TRANSPORT_TCP;
+        rtp_list_add(pkt_list->prev, &pkt->link);
+        send_to_clients(server, pkt);
+    }
+
+    if (nal_len > udp_max_len - udp_header_offset) { // only for rtp over udp
+        int fragment_len = udp_max_len - udp_header_offset - 2;
+        int pkt_num, i;
+        int fu_len = fragment_len;
+        char* fu_buf;
+
+        if ((nal_len - 1) % fragment_len == 0)
+            pkt_num = (nal_len - 1) / fragment_len;
+        else
+            pkt_num = (nal_len - 1) / fragment_len + 1;
+        for (i = 0; i < pkt_num; i++) {
+            pkt = get_packet_from_pool(&server->rtp_info);
+            if (i == pkt_num - 1)
+                fu_len = nal_len - 1 - i * fragment_len;
+            server->rtp_info.sequence_num++;
+            pkt->header_len = generate_rtp_header(pkt->buf, fu_len + 2, i == pkt_num - 1, server->rtp_info.sequence_num,
+                pts, server->rtp_info.ssrc, RTP_TRANSPORT_UDP);
+            fu_buf = pkt->buf + udp_header_offset;
+            fu_buf[0] = 0x00 | (nal[0] & 0x60) | 28;
+            fu_buf[1] = (i == 0 ? 0x80 : 0x00) | ((i == pkt_num - 1) ? 0x40 : 0x00) | (nal[0] & 0x1f);
+            memcpy(fu_buf + 2, nal + 1 + i * fragment_len, fu_len);
+            pkt->len = udp_header_offset + 2 + fu_len;
+            pkt->transport = RTP_TRANSPORT_UDP;
+            rtp_list_add(pkt_list->prev, &pkt->link);
+            send_to_clients(server, pkt);
+        }
+    } else {
+        server->rtp_info.sequence_num++;
+        pkt = get_packet_from_pool(&server->rtp_info);
+        pkt->header_len = generate_rtp_header(pkt->buf, nal_len, 0, server->rtp_info.sequence_num, pts,
+            server->rtp_info.ssrc, RTP_TRANSPORT_UDP);
+        memcpy(pkt->buf + udp_header_offset, nal, nal_len);
+        pkt->len = udp_header_offset + nal_len;
+        pkt->transport = RTP_TRANSPORT_UDP;
         rtp_list_add(pkt_list->prev, &pkt->link);
         send_to_clients(server, pkt);
     }
@@ -513,25 +561,33 @@ void rtsp_handle_describe(struct rtsp_session* session)
 void rtsp_handle_setup(struct rtsp_session* session)
 {
     char tmp[100];
-
+    char* start_p = NULL;
     generate_session_number(session);
     generate_response_header(session);
     snprintf(tmp, sizeof(tmp), "Session: %lu\r\n", session->session_num);
     strcat(session->response_buf, tmp);
 
-    if (session->ctx->server->rtp_info.transport == RTP_TRANSPORT_UDP) {
-        if (session->ctx->udp_send_port == 0)
-            session->ctx->udp_send_port = RTP_UDP_SEND_PORT;
-        snprintf(tmp, 100,
-            "Transport: RTP/AVP;unicast;"
-            "client_port=%d-%d\r\n\r\n",
-            session->ctx->udp_send_port, session->ctx->udp_send_port + 1);
-        strcat(session->response_buf, tmp);
-    } else {
-        strcat(session->response_buf,
-            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;\r\n"
-            "\r\n");
+    start_p = strstr(session->read_buf, "Transport:");
+    if (start_p) {
+        if (strstr(start_p, "RTP/AVP/TCP")) {
+            strcat(session->response_buf,
+                "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;\r\n"
+                "\r\n");
+            session->ctx->transport = RTP_TRANSPORT_TCP;
+
+        } else {
+            if (session->ctx->udp_send_port == 0)
+                session->ctx->udp_send_port = RTP_UDP_SEND_PORT;
+
+            snprintf(tmp, 100,
+                "Transport: RTP/AVP;unicast;"
+                "client_port=%d-%d\r\n\r\n",
+                session->ctx->udp_send_port, session->ctx->udp_send_port + 1);
+            strcat(session->response_buf, tmp);
+            session->ctx->transport = RTP_TRANSPORT_UDP;
+        }
     }
+
     send_response(session->ctx->fd, session->response_buf, strlen(session->response_buf));
 }
 
@@ -572,6 +628,8 @@ int rtsp_get_request(struct rtsp_session* session)
         else if (ret == 0)
             return RTSP_MSG_NULL;
         session->read_buf[REQUEST_READ_BUF_SIZE - 1] = 0;
+    } else {
+        return RTSP_MSG_NULL;
     }
 
     if (strstr(session->read_buf, "OPTIONS"))
@@ -680,8 +738,7 @@ void cleanup_rtsp_session(struct client_context* client)
     if (client->session)
         free(client->session);
 }
-
-struct rtsp_server_context* rtsp_start_server(enum rtp_transport transport, int port)
+struct rtsp_server_context* rtsp_start_server(enum RTSP_STREAM_TYPE stream_type, int port)
 {
     struct rtsp_server_context* server;
     int ret = 0;
@@ -696,18 +753,11 @@ struct rtsp_server_context* rtsp_start_server(enum rtp_transport transport, int 
     rtp_list_init(&server->client_list);
     init_packet_pool(&server->rtp_info);
 
-    if (transport != RTP_TRANSPORT_UDP && transport != RTP_TRANSPORT_TCP)
-        server->rtp_info.transport = RTP_TRANSPORT_TCP;
-    else
-        server->rtp_info.transport = transport;
-
-    if (server->rtp_info.transport == RTP_TRANSPORT_UDP) {
-        server->rtp_info.udp_send_socket = socket(AF_INET, SOCK_DGRAM, 0);
-        if (server->rtp_info.udp_send_socket == -1) {
-            debug("rtsp: failed to create send socket\n");
-            free(server);
-            return NULL;
-        }
+    server->rtp_info.udp_send_socket = socket(AF_INET, SOCK_DGRAM, 0);
+    if (server->rtp_info.udp_send_socket == -1) {
+        debug("rtsp: failed to create send socket\n");
+        free(server);
+        return NULL;
     }
 
     server->stop = 0;

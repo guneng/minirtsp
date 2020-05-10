@@ -188,7 +188,7 @@ static void __cb_event(int event_num)
 int main(int argc, char** argv)
 {
     rtsp_set_event_cb(__cb_event);
-    g_rtsp_servers[0] = rtsp_start_server(RTP_TRANSPORT_TCP, 4433);
+    g_rtsp_servers[0] = rtsp_start_server(RTSP_STREAM_TYPE_H264, 4433);
 
     mov_reader_test(argv[1], 1);
 

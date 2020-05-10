@@ -1,6 +1,6 @@
-#include <strings.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
+#include <strings.h>
 
 #include "sdp.h"
 

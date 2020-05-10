@@ -552,7 +552,7 @@ void rtp_push_data(struct rtsp_server_context *server, void *data, int size, uns
     if (server->client_list.next && server->client_list.next != &server->client_list)
     {
         rtp_list_init(&packets);
-        generate_rtp_packets_and_send(server, &packets, data, size, pts * 9 / 100);
+        generate_rtp_packets_and_send(server, &packets, data, size, pts * 90);
         reset_packet_pool(&server->rtp_info);
     }
 }

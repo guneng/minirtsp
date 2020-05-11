@@ -67,10 +67,12 @@ struct list_t {
 };
 
 struct rtp_packet {
-    char buf[RTP_PACKET_MAX_SIZE];
-    int len;
-    int header_len;
-    enum rtp_transport transport;
+    char tcp_buf[RTP_PACKET_MAX_SIZE];
+    char* udp_buf;
+    int tcp_rtp_len;
+    int udp_rtp_len;
+    int tcp_header_len;
+    int udp_header_len;
     struct list_t link;
 };
 
@@ -229,23 +231,23 @@ void send_stream(struct client_context* client, struct rtp_packet* pkt)
 {
     if (client->transport == RTP_TRANSPORT_UDP) {
         client->addr.sin_port = htons(client->udp_send_port);
-        sendto(client->server->rtp_info.udp_send_socket, pkt->buf, pkt->len, 0, (struct sockaddr*)&client->addr,
+        sendto(client->server->rtp_info.udp_send_socket, pkt->udp_buf, pkt->udp_rtp_len, 0, (struct sockaddr*)&client->addr,
             sizeof(struct sockaddr_in));
     } else {
-        _send(client->fd, pkt->buf, pkt->len);
+        _send(client->fd, pkt->tcp_buf, pkt->tcp_rtp_len);
     }
 }
 
 void send_to_clients(struct rtsp_server_context* server, struct rtp_packet* pkt)
 {
     struct client_context *client, *next;
-    char* p = pkt->buf + pkt->header_len;
+    char* p = pkt->tcp_buf + pkt->tcp_header_len;
 
     pthread_mutex_lock(&server->client_list_lock);
     rtp_list_for_each_safe(client, next, &server->client_list, link)
     {
         if (client) {
-            if (client->start_play && pkt->transport == client->transport) {
+            if (client->start_play) {
                 if (server->port != 0 && client->find_i_frame == 0) { /* using RTSP */
                     if ((p[4] & 0x1f) == 5) /* I frame */
                     {
@@ -300,63 +302,33 @@ void generate_rtp_packets_and_send(struct rtsp_server_context* server, struct li
             if (i == pkt_num - 1)
                 fu_len = nal_len - 1 - i * fragment_len;
             server->rtp_info.sequence_num++;
-            pkt->header_len = generate_rtp_header(pkt->buf, fu_len + 2, i == pkt_num - 1, server->rtp_info.sequence_num,
+            pkt->tcp_header_len = generate_rtp_header(pkt->tcp_buf, fu_len + 2, i == pkt_num - 1, server->rtp_info.sequence_num,
                 pts, server->rtp_info.ssrc, RTP_TRANSPORT_TCP);
-            fu_buf = pkt->buf + tcp_header_offset;
+            fu_buf = pkt->tcp_buf + tcp_header_offset;
             fu_buf[0] = 0x00 | (nal[0] & 0x60) | 28;
             fu_buf[1] = (i == 0 ? 0x80 : 0x00) | ((i == pkt_num - 1) ? 0x40 : 0x00) | (nal[0] & 0x1f);
             memcpy(fu_buf + 2, nal + 1 + i * fragment_len, fu_len);
-            pkt->len = tcp_header_offset + 2 + fu_len;
-            pkt->transport = RTP_TRANSPORT_TCP;
+            pkt->tcp_rtp_len = tcp_header_offset + 2 + fu_len;
+
+            pkt->udp_header_len = pkt->tcp_header_len - 4;
+            pkt->udp_rtp_len = pkt->tcp_rtp_len - 4;
+            pkt->udp_buf = pkt->tcp_buf + 4;
+
             rtp_list_add(pkt_list->prev, &pkt->link);
             send_to_clients(server, pkt);
         }
     } else {
         server->rtp_info.sequence_num++;
         pkt = get_packet_from_pool(&server->rtp_info);
-        pkt->header_len = generate_rtp_header(pkt->buf, nal_len, 0, server->rtp_info.sequence_num, pts,
+        pkt->tcp_header_len = generate_rtp_header(pkt->tcp_buf, nal_len, 0, server->rtp_info.sequence_num, pts,
             server->rtp_info.ssrc, RTP_TRANSPORT_TCP);
-        memcpy(pkt->buf + tcp_header_offset, nal, nal_len);
-        pkt->len = tcp_header_offset + nal_len;
-        pkt->transport = RTP_TRANSPORT_TCP;
-        rtp_list_add(pkt_list->prev, &pkt->link);
-        send_to_clients(server, pkt);
-    }
+        memcpy(pkt->tcp_buf + tcp_header_offset, nal, nal_len);
+        pkt->tcp_rtp_len = tcp_header_offset + nal_len;
 
-    if (nal_len > udp_max_len - udp_header_offset) { // only for rtp over udp
-        int fragment_len = udp_max_len - udp_header_offset - 2;
-        int pkt_num, i;
-        int fu_len = fragment_len;
-        char* fu_buf;
+        pkt->udp_header_len = pkt->tcp_header_len - 4;
+        pkt->udp_rtp_len = pkt->tcp_rtp_len - 4;
+        pkt->udp_buf = pkt->tcp_buf + 4;
 
-        if ((nal_len - 1) % fragment_len == 0)
-            pkt_num = (nal_len - 1) / fragment_len;
-        else
-            pkt_num = (nal_len - 1) / fragment_len + 1;
-        for (i = 0; i < pkt_num; i++) {
-            pkt = get_packet_from_pool(&server->rtp_info);
-            if (i == pkt_num - 1)
-                fu_len = nal_len - 1 - i * fragment_len;
-            server->rtp_info.sequence_num++;
-            pkt->header_len = generate_rtp_header(pkt->buf, fu_len + 2, i == pkt_num - 1, server->rtp_info.sequence_num,
-                pts, server->rtp_info.ssrc, RTP_TRANSPORT_UDP);
-            fu_buf = pkt->buf + udp_header_offset;
-            fu_buf[0] = 0x00 | (nal[0] & 0x60) | 28;
-            fu_buf[1] = (i == 0 ? 0x80 : 0x00) | ((i == pkt_num - 1) ? 0x40 : 0x00) | (nal[0] & 0x1f);
-            memcpy(fu_buf + 2, nal + 1 + i * fragment_len, fu_len);
-            pkt->len = udp_header_offset + 2 + fu_len;
-            pkt->transport = RTP_TRANSPORT_UDP;
-            rtp_list_add(pkt_list->prev, &pkt->link);
-            send_to_clients(server, pkt);
-        }
-    } else {
-        server->rtp_info.sequence_num++;
-        pkt = get_packet_from_pool(&server->rtp_info);
-        pkt->header_len = generate_rtp_header(pkt->buf, nal_len, 0, server->rtp_info.sequence_num, pts,
-            server->rtp_info.ssrc, RTP_TRANSPORT_UDP);
-        memcpy(pkt->buf + udp_header_offset, nal, nal_len);
-        pkt->len = udp_header_offset + nal_len;
-        pkt->transport = RTP_TRANSPORT_UDP;
         rtp_list_add(pkt_list->prev, &pkt->link);
         send_to_clients(server, pkt);
     }

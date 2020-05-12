@@ -249,9 +249,17 @@ void send_to_clients(struct rtsp_server_context* server, struct rtp_packet* pkt)
         if (client) {
             if (client->start_play) {
                 if (server->port != 0 && client->find_i_frame == 0) { /* using RTSP */
-                    if ((p[4] & 0x1f) == 5) /* I frame */
+                    if (((p[0] & 0x1f) == 5) 
+                       || ((p[0] & 0x1f) == 7) 
+                       || ((p[0] & 0x1f) == 8)) /* I frame */
                     {
                         client->find_i_frame = 1;
+                    } else if (((p[0] & 0x1c) == 0x1c) 
+                            && ((p[1] & 0x1f) == 5)) {
+                        client->find_i_frame = 1;
+                        printf("big frame \n");
+                    } else {
+                        printf("ho, still waiting i frame nal is [%hhu]\n", (p[0] & 0x1f), p[1] & 0x1f);
                     }
                 }
                 if (client->find_i_frame) {
@@ -305,7 +313,7 @@ void generate_rtp_packets_and_send(struct rtsp_server_context* server, struct li
             pkt->tcp_header_len = generate_rtp_header(pkt->tcp_buf, fu_len + 2, i == pkt_num - 1, server->rtp_info.sequence_num,
                 pts, server->rtp_info.ssrc, RTP_TRANSPORT_TCP);
             fu_buf = pkt->tcp_buf + tcp_header_offset;
-            fu_buf[0] = 0x00 | (nal[0] & 0x60) | 28;
+            fu_buf[0] = (nal[0] & 0xE0) | 0x1C;
             fu_buf[1] = (i == 0 ? 0x80 : 0x00) | ((i == pkt_num - 1) ? 0x40 : 0x00) | (nal[0] & 0x1f);
             memcpy(fu_buf + 2, nal + 1 + i * fragment_len, fu_len);
             pkt->tcp_rtp_len = tcp_header_offset + 2 + fu_len;

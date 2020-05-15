@@ -206,7 +206,7 @@ int _send(int fd, void* buf, int len)
     struct timeval tv;
     fd_set fds;
     int ret;
-
+    int count = 10;
     do {
         tv.tv_sec = 0;
         tv.tv_usec = 1000;
@@ -216,13 +216,15 @@ int _send(int fd, void* buf, int len)
         if (ret > 0) {
             if (FD_ISSET(fd, &fds)) {
                 send(fd, buf, len, 0);
+                count = 0;
             }
         } else if (ret == 0) {
+            count--;
             continue;
         } else {
             return -1;
         }
-    } while (ret == 0);
+    } while (count > 0);
 
     return 0;
 }
@@ -313,7 +315,7 @@ void generate_rtp_packets_and_send(struct rtsp_server_context* server, struct li
             pkt->tcp_header_len = generate_rtp_header(pkt->tcp_buf, fu_len + 2, i == pkt_num - 1, server->rtp_info.sequence_num,
                 pts, server->rtp_info.ssrc, RTP_TRANSPORT_TCP);
             fu_buf = pkt->tcp_buf + tcp_header_offset;
-            fu_buf[0] = (nal[0] & 0xE0) | 0x1C;
+            fu_buf[0] = (nal[0] & 0x60) | 0x1C;
             fu_buf[1] = (i == 0 ? 0x80 : 0x00) | ((i == pkt_num - 1) ? 0x40 : 0x00) | (nal[0] & 0x1f);
             memcpy(fu_buf + 2, nal + 1 + i * fragment_len, fu_len);
             pkt->tcp_rtp_len = tcp_header_offset + 2 + fu_len;

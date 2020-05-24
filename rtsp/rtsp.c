@@ -594,24 +594,25 @@ int rtsp_get_request(struct rtsp_session* session)
 
     FD_ZERO(&fds);
     FD_SET(session->ctx->fd, &fds);
-    tv.tv_sec = 0;
+    tv.tv_sec = 120;
     tv.tv_usec = 10 * 1000;
 
     ret = select(session->ctx->fd + 1, &fds, NULL, NULL, &tv);
     if (ret == 0)
-        return RTSP_MSG_NULL;
-    else if (ret < 0)
         return -1;
+    else if (ret < 0)
+        return -2;
 
     if (FD_ISSET(session->ctx->fd, &fds)) {
         ret = recv(session->ctx->fd, session->read_buf, REQUEST_READ_BUF_SIZE - 1, 0);
         if (ret < 0)
-            return -1;
+            return -3;
         else if (ret == 0)
-            return RTSP_MSG_NULL;
+            return -4;
         session->read_buf[REQUEST_READ_BUF_SIZE - 1] = 0;
     } else {
-        return RTSP_MSG_NULL;
+        return -5;
+
     }
 
     if (strstr(session->read_buf, "OPTIONS"))
@@ -664,8 +665,11 @@ int rtsp_message_process(struct rtsp_session* session)
 
     type = rtsp_get_request(session);
 
-    if (type < 0)
+    if (type < 0) {
+        printf("rtsp_get_request error with %d\n", type);
+        session->ctx->start_play = 0;
         return -1;
+    }
 
     switch (type) {
     case RTSP_MSG_OPTIONS:

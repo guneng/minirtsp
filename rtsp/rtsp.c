@@ -85,6 +85,7 @@ struct pkt_pool {
 struct rtp_info {
     unsigned short sequence_num;
     unsigned long ssrc;
+    unsigned char has_sdp;
     struct sdp_info sdp;
     struct pkt_pool pool;
     int udp_send_socket;
@@ -109,6 +110,7 @@ struct rtsp_server_context {
     int sd;
     pthread_t thread_id;
     int port;
+    enum RTSP_STREAM_TYPE video_stream_type;
     void (*init_client)(struct client_context* ctx);
     void (*release_client)(struct client_context* ctx);
     struct rtp_info rtp_info;
@@ -429,6 +431,56 @@ void* rtp_tcp_server_thread(void* arg)
     close(server_ctx->sd);
 }
 
+static void _generate_h264_sdp(struct rtsp_server_context* server, unsigned char* data, int size)
+{
+    if (!server->rtp_info.sdp.has_sps 
+        || !server->rtp_info.sdp.has_pps) {
+        if (7 == (data[4] & 0x1f)) {
+            memcpy(server->rtp_info.sdp.sps, data + 4, size);
+            server->rtp_info.sdp.sps_len = size - 4;
+            server->rtp_info.sdp.has_sps = 1;
+        } else if (8 == (data[4] & 0x1f)) {
+            memcpy(server->rtp_info.sdp.pps, data + 4, size);
+            server->rtp_info.sdp.pps_len = size - 4;
+            server->rtp_info.sdp.has_pps = 1;
+        }
+        
+        if (server->rtp_info.sdp.has_sps 
+            && server->rtp_info.sdp.has_pps) {
+                server->rtp_info.has_sdp = 1;
+            generate_sdp(&server->rtp_info.sdp);
+        }
+    }
+}
+
+static void _generate_h265_sdp(struct rtsp_server_context* server, unsigned char* data, int size)
+{
+    if (!server->rtp_info.sdp.has_sps 
+        || !server->rtp_info.sdp.has_pps
+        || !server->rtp_info.sdp.has_vps) {
+        if (33 == ((data[4] >> 1) & 0x3f)) {
+            memcpy(server->rtp_info.sdp.sps, data + 4, size);
+            server->rtp_info.sdp.sps_len = size - 4;
+            server->rtp_info.sdp.has_sps = 1;
+        } else if (34 == ((data[4] >> 1) & 0x3f)) {
+            memcpy(server->rtp_info.sdp.pps, data + 4, size);
+            server->rtp_info.sdp.pps_len = size - 4;
+            server->rtp_info.sdp.has_pps = 1;
+        } else if (32 == ((data[4] >> 1) & 0x3f)) {
+            memcpy(server->rtp_info.sdp.vps, data + 4, size);
+            server->rtp_info.sdp.vps_len = size - 4;
+            server->rtp_info.sdp.has_vps = 1;
+        }
+
+        if (server->rtp_info.sdp.has_sps
+            && server->rtp_info.sdp.has_pps
+            && server->rtp_info.sdp.has_vps) {
+            server->rtp_info.has_sdp = 1;
+            generate_sdp(&server->rtp_info.sdp);
+        }
+    }
+}
+
 void rtp_push_data(struct rtsp_server_context* server, void* data, int size, unsigned long long pts)
 {
     char* p = (char*)data;
@@ -436,21 +488,14 @@ void rtp_push_data(struct rtsp_server_context* server, void* data, int size, uns
 
     if (server == NULL)
         return;
-
-    if (!server->rtp_info.sdp.has_sps || !server->rtp_info.sdp.has_pps) {
-        if (7 == (p[4] & 0x1f)) {
-            memcpy(server->rtp_info.sdp.sps, p + 4, size);
-            server->rtp_info.sdp.sps_len = size - 4;
-            server->rtp_info.sdp.has_sps = 1;
-        } else if (8 == (p[4] & 0x1f)) {
-            memcpy(server->rtp_info.sdp.pps, p + 4, size);
-            server->rtp_info.sdp.pps_len = size - 4;
-            server->rtp_info.sdp.has_pps = 1;
+    if (!server->rtp_info.has_sdp) {
+        if (server->video_stream_type == RTSP_STREAM_TYPE_H264) {
+            _generate_h264_sdp(server, data, size);
+        } else if (server->video_stream_type == RTSP_STREAM_TYPE_H265) {
+            _generate_h265_sdp(server, data, size);
         }
-        generate_sdp(&server->rtp_info.sdp);
-    }
-
-    if (server->client_list.next && server->client_list.next != &server->client_list) {
+        server->rtp_info.sdp.video_type = server->video_stream_type;
+    } else if (server->client_list.next && server->client_list.next != &server->client_list) {
         rtp_list_init(&packets);
         generate_rtp_packets_and_send(server, &packets, data, size, pts * 90);
         reset_packet_pool(&server->rtp_info);
@@ -746,6 +791,7 @@ struct rtsp_server_context* rtsp_start_server(enum RTSP_STREAM_TYPE stream_type,
         return NULL;
     }
 
+    server->video_stream_type = stream_type;
     server->stop = 0;
     server->port = port;
     server->init_client = init_rtsp_session;

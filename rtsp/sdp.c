@@ -20,7 +20,6 @@ static char s_base64_url[64] = {
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_'
 };
 
-
 static size_t base64_encode_table(char* target, const void* source, size_t bytes, const char* table)
 {
     size_t i, j;
@@ -61,30 +60,47 @@ void generate_sdp(struct sdp_info* sdp)
 {
     char tmp[256];
 
-    if (!sdp->has_sps || !sdp->has_pps)
-        return;
-
     memset(sdp->content, '\0', sizeof(sdp->content));
 
     sdp->content[0] = 0;
 
-    strcat(sdp->content, "v=0\r\n");
+    strcat(sdp->content, "v=0\r\ns=miniplayer\r\n");
 
-    strcat(sdp->content, "m=video 0 RTP/AVP 96\r\n");
-    sprintf(sdp->content + strlen(sdp->content),
-        "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 profile-level-id=%02hhX%02hhX%02hhX;packetization-mode=1;"
-        "sprop-parameter-sets=",
-        sdp->sps[1], sdp->sps[2], sdp->sps[3]);
+    if (sdp->video_type == RTSP_STREAM_TYPE_H264) {
+        strcat(sdp->content, "m=video 0 RTP/AVP 96\r\n");
+        sprintf(sdp->content + strlen(sdp->content),
+            "a=rtpmap:96 H264/90000\r\n"
+            "a=fmtp:96 profile-level-id=%02hhX%02hhX%02hhX;packetization-mode=1;"
+            "sprop-parameter-sets=",
+            sdp->sps[1], sdp->sps[2], sdp->sps[3]);
 
-    memset(tmp, 0, sizeof(tmp));
-    base64_encode(tmp, sdp->sps, sdp->sps_len);
-    strcat(sdp->content, tmp);
-    strcat(sdp->content, ",");
-    memset(tmp, 0, sizeof(tmp));
-    base64_encode(tmp, sdp->pps, sdp->pps_len);
-    strcat(sdp->content, tmp);
-    strcat(sdp->content, "\r\n");
+        memset(tmp, 0, sizeof(tmp));
+        _base64_encode(tmp, sdp->sps, sdp->sps_len);
+        strcat(sdp->content, tmp);
+        strcat(sdp->content, ",");
+
+        memset(tmp, 0, sizeof(tmp));
+        _base64_encode(tmp, sdp->pps, sdp->pps_len);
+        strcat(sdp->content, tmp);
+        strcat(sdp->content, "\r\n");
+    } else if (sdp->video_type == RTSP_STREAM_TYPE_H265) {
+        strcat(sdp->content, "m=video 0 RTP/AVP 97\r\n");
+        strcat(sdp->content, "a=rtpmap:97 H265/90000\r\n"
+                             "a=fmtp:97 ");
+
+        memset(tmp, 0, sizeof(tmp));
+        _base64_encode(tmp, sdp->vps, sdp->vps_len);
+        sprintf(sdp->content + strlen(sdp->content), "sprop-vps=%s;", tmp);
+
+        memset(tmp, 0, sizeof(tmp));
+        _base64_encode(tmp, sdp->sps, sdp->sps_len);
+        sprintf(sdp->content + strlen(sdp->content), "sprop-sps=%s;", tmp);
+
+        memset(tmp, 0, sizeof(tmp));
+        _base64_encode(tmp, sdp->pps, sdp->pps_len);
+        sprintf(sdp->content + strlen(sdp->content), "sprop-pps=%s\r\n", tmp);
+
+    }
 
     sdp->len = strlen(sdp->content);
 }

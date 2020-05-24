@@ -63,13 +63,15 @@ void generate_sdp(struct sdp_info* sdp)
     strcat(sdp->content, "m=video 0 RTP/AVP 96\r\n");
     sprintf(sdp->content + strlen(sdp->content),
         "a=rtpmap:96 H264/90000\r\n"
-        "a=fmtp:96 profile-level-id=%02hhx%02hhx%02hhx;packetization-mode=1;"
+        "a=fmtp:96 profile-level-id=%02hhX%02hhX%02hhX;packetization-mode=1;"
         "sprop-parameter-sets=",
-        sdp->sps[5], sdp->sps[6], sdp->sps[7]);
+        sdp->sps[1], sdp->sps[2], sdp->sps[3]);
 
+    memset(tmp, 0, sizeof(tmp));
     base64_encode(tmp, sdp->sps, sdp->sps_len);
     strcat(sdp->content, tmp);
     strcat(sdp->content, ",");
+    memset(tmp, 0, sizeof(tmp));
     base64_encode(tmp, sdp->pps, sdp->pps_len);
     strcat(sdp->content, tmp);
     strcat(sdp->content, "\r\n");

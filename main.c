@@ -44,7 +44,7 @@ static unsigned long long get_timems(void)
 {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return tv.tv_sec * 1000 + tv.tv_usec;
+    return tv.tv_sec * 1000 + tv.tv_usec / 1000;
 }
 
 static void onread(void* flv, uint32_t track, const void* buffer, size_t bytes, int64_t pts, int64_t dts, int flags)

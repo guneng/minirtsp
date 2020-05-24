@@ -251,13 +251,13 @@ void send_to_clients(struct rtsp_server_context* server, struct rtp_packet* pkt)
         if (client) {
             if (client->start_play) {
                 if (server->port != 0 && client->find_i_frame == 0) { /* using RTSP */
-                    if (((p[0] & 0x1f) == 5) 
-                       || ((p[0] & 0x1f) == 7) 
-                       || ((p[0] & 0x1f) == 8)) /* I frame */
+                    if (((p[0] & 0x1f) == 5)
+                        || ((p[0] & 0x1f) == 7)
+                        || ((p[0] & 0x1f) == 8)) /* I frame */
                     {
                         client->find_i_frame = 1;
-                    } else if (((p[0] & 0x1c) == 0x1c) 
-                            && ((p[1] & 0x1f) == 5)) {
+                    } else if (((p[0] & 0x1c) == 0x1c)
+                        && ((p[1] & 0x1f) == 5)) {
                         client->find_i_frame = 1;
                         printf("big frame \n");
                     } else {
@@ -439,12 +439,12 @@ void rtp_push_data(struct rtsp_server_context* server, void* data, int size, uns
 
     if (!server->rtp_info.sdp.has_sps || !server->rtp_info.sdp.has_pps) {
         if (7 == (p[4] & 0x1f)) {
-            memcpy(server->rtp_info.sdp.sps, p, size);
-            server->rtp_info.sdp.sps_len = size;
+            memcpy(server->rtp_info.sdp.sps, p + 4, size);
+            server->rtp_info.sdp.sps_len = size - 4;
             server->rtp_info.sdp.has_sps = 1;
         } else if (8 == (p[4] & 0x1f)) {
-            memcpy(server->rtp_info.sdp.pps, p, size);
-            server->rtp_info.sdp.pps_len = size;
+            memcpy(server->rtp_info.sdp.pps, p + 4, size);
+            server->rtp_info.sdp.pps_len = size - 4;
             server->rtp_info.sdp.has_pps = 1;
         }
         generate_sdp(&server->rtp_info.sdp);

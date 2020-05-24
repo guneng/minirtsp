@@ -1,50 +1,60 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 
 #include "sdp.h"
 
-static void base64_encode(char* dst, char* src, int len)
+static char s_base64_enc[64] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '+', '/'
+};
+static char s_base64_url[64] = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
+    'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-', '_'
+};
+
+
+static size_t base64_encode_table(char* target, const void* source, size_t bytes, const char* table)
 {
-    int out_len;
-    int i;
-    int left_count;
-    int index;
-    static const char base64[128] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t i, j;
+    const uint8_t* ptr = (const uint8_t*)source;
 
-    if ((left_count = len % 3) > 0)
-        out_len = (len / 3 + 1) * 4;
-    else
-        out_len = len / 3 * 4;
+    for (j = i = 0; i < bytes / 3 * 3; i += 3) {
+        target[j++] = table[(ptr[i] >> 2) & 0x3F]; /* c1 */
+        target[j++] = table[((ptr[i] & 0x03) << 4) | ((ptr[i + 1] >> 4) & 0x0F)]; /*c2*/
+        target[j++] = table[((ptr[i + 1] & 0x0F) << 2) | ((ptr[i + 2] >> 6) & 0x03)]; /*c3*/
+        target[j++] = table[ptr[i + 2] & 0x3F]; /* c4 */
+    }
 
-    for (i = 0; i < len / 3; i++) {
-        index = src[i * 3] >> 2;
-        dst[i * 4] = base64[index];
-        index = ((src[i * 3] & 0x03) << 4) | ((src[i * 3 + 1] & 0xf0) >> 4);
-        dst[i * 4 + 1] = base64[index];
-        index = ((src[i * 3 + 1] & 0x0f) << 2) | ((src[i * 3 + 2] & 0xc0) >> 6);
-        dst[i * 4 + 2] = base64[index];
-        index = src[i * 3 + 2] & 0x3f;
-        dst[i * 4 + 3] = base64[index];
+    if (i < bytes) {
+        /* There were only 2 bytes in that last group */
+        target[j++] = table[(ptr[i] >> 2) & 0x3F];
+
+        if (i + 1 < bytes) {
+            target[j++] = table[((ptr[i] & 0x03) << 4) | ((ptr[i + 1] >> 4) & 0x0F)]; /*c2*/
+            target[j++] = table[((ptr[i + 1] & 0x0F) << 2)]; /*c3*/
+        } else {
+            /* There was only 1 byte in that last group */
+            target[j++] = table[((ptr[i] & 0x03) << 4)]; /*c2*/
+            target[j++] = '='; /*c3*/
+        }
+
+        target[j++] = '='; /*c4*/
     }
-    if (left_count == 1) {
-        index = src[i * 3] >> 2;
-        dst[i * 4] = base64[index];
-        index = (src[i * 3] & 0x03) << 4;
-        dst[i * 4 + 1] = base64[index];
-        dst[i * 4 + 2] = '=';
-        dst[i * 4 + 3] = '=';
-    }
-    if (left_count == 2) {
-        index = src[i * 3] >> 2;
-        dst[i * 4] = base64[index];
-        index = ((src[i * 3] & 0x03) << 4) | ((src[i * 3 + 1] & 0xf0) >> 4);
-        dst[i * 4 + 1] = base64[index];
-        index = (src[i * +1] & 0x0f) << 2;
-        dst[i * 4 + 2] = base64[index];
-        dst[i * 4 + 3] = '=';
-    }
-    dst[out_len] = 0;
+
+    return j;
+}
+
+static size_t _base64_encode(char* target, const void* source, size_t bytes)
+{
+    return base64_encode_table(target, source, bytes, s_base64_enc);
 }
 
 void generate_sdp(struct sdp_info* sdp)

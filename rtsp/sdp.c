@@ -99,7 +99,6 @@ void generate_sdp(struct sdp_info* sdp)
         memset(tmp, 0, sizeof(tmp));
         _base64_encode(tmp, sdp->pps, sdp->pps_len);
         sprintf(sdp->content + strlen(sdp->content), "sprop-pps=%s\r\n", tmp);
-
     }
 
     sdp->len = strlen(sdp->content);

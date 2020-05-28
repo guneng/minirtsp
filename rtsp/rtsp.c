@@ -136,17 +136,8 @@ void send_to_clients(struct rtsp_server_context* server, struct rtp_packet* pkt)
         if (client) {
             if (client->start_play) {
                 if (server->port != 0 && client->find_i_frame == 0) { /* using RTSP */
-                    if (((p[0] & 0x1f) == 5)
-                        || ((p[0] & 0x1f) == 7)
-                        || ((p[0] & 0x1f) == 8)) /* I frame */
-                    {
+                    if (pkt->is_key) {
                         client->find_i_frame = 1;
-                    } else if (((p[0] & 0x1c) == 0x1c)
-                        && ((p[1] & 0x1f) == 5)) {
-                        client->find_i_frame = 1;
-                        printf("big frame \n");
-                    } else {
-                        printf("ho, still waiting i frame nal is [%hhu]\n", (p[0] & 0x1f), p[1] & 0x1f);
                     }
                 }
                 if (client->find_i_frame) {

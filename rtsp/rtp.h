@@ -20,6 +20,7 @@ struct list_t {
 };
 
 struct rtp_packet {
+    int is_key;
     char tcp_buf[RTP_PACKET_MAX_SIZE];
     char* udp_buf;
     int tcp_rtp_len;

@@ -64,7 +64,7 @@ void generate_sdp(struct sdp_info* sdp)
 
     sdp->content[0] = 0;
 
-    strcat(sdp->content, "v=0\r\ns=miniplayer\r\n");
+    strcat(sdp->content, "v=0\r\ns=miniplayer\r\nt=0 0\r\na=control:*\r\nc=IN IP4 0.0.0.0\r\n");
 
     if (sdp->video_type == RTSP_STREAM_TYPE_H264) {
         strcat(sdp->content, "m=video 0 RTP/AVP 96\r\n");
@@ -84,7 +84,7 @@ void generate_sdp(struct sdp_info* sdp)
         strcat(sdp->content, tmp);
         strcat(sdp->content, "\r\n");
     } else if (sdp->video_type == RTSP_STREAM_TYPE_H265) {
-        strcat(sdp->content, "m=video 0 RTP/AVP 97\r\n");
+        strcat(sdp->content, "m=video 0 RTP/AVP 97\r\nb=AS:500\r\n");
         strcat(sdp->content, "a=rtpmap:97 H265/90000\r\n"
                              "a=fmtp:97 ");
 

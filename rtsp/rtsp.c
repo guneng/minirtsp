@@ -416,7 +416,7 @@ void rtsp_handle_setup(struct rtsp_session* session)
                 session->ctx->udp_send_port = RTP_UDP_SEND_PORT;
 
             snprintf(tmp, 100,
-                "Transport: RTP/AVP;unicast;"
+                "Transport: RTP/AVP/UDP;unicast;"
                 "client_port=%d-%d\r\n\r\n",
                 session->ctx->udp_send_port, session->ctx->udp_send_port + 1);
             strcat(session->response_buf, tmp);
@@ -488,18 +488,30 @@ int rtsp_get_request(struct rtsp_session* session)
         if ((sub_str = strstr(start, "CSeq: ")) != NULL) {
             pos = strstr(sub_str, "\r\n");
             if (pos) {
-                memcpy(session->cseq, sub_str + 6, pos - sub_str - 6);
-                session->cseq[pos - sub_str - 6] = 0;
-                start = pos + 2;
+
+                if ((pos - sub_str - 6) <= sizeof(session->cseq)) {
+                    memcpy(session->cseq, sub_str + 6, pos - sub_str - 6);
+                    session->cseq[pos - sub_str - 6] = 0;
+                    //start = pos + 2;
+                } else {
+                    printf("%s:%d:CSeq buffer overflow\n", __func__, __LINE__);
+                    msg_type = RTSP_MSG_TEARDOWN;
+                }
             }
         }
+
         if ((sub_str = strstr(start, "client_port=")) != NULL) {
             pos = strstr(sub_str, "-");
             if (pos) {
-                char tmp[10];
-                memcpy(tmp, sub_str + 12, pos - sub_str - 12);
-                tmp[pos - sub_str - 12] = 0;
-                session->ctx->udp_send_port = strtol(tmp, NULL, 0);
+                char tmp[32];
+                if ((pos - sub_str - 6) <= sizeof(tmp)) {
+                    memcpy(tmp, sub_str + 12, pos - sub_str - 12);
+                    tmp[pos - sub_str - 12] = 0;
+                    session->ctx->udp_send_port = strtol(tmp, NULL, 0);
+                } else {
+                    printf("%s:%d:client_por buffer overflow\n", __func__, __LINE__);
+                    msg_type = RTSP_MSG_TEARDOWN;
+                }
             }
         }
     }

@@ -640,3 +640,40 @@ void rtsp_stop_server(struct rtsp_server_context* server)
     }
     server_cleanup(server);
 }
+
+unsigned char* find_start_code(unsigned char* pos, int len)
+{
+    unsigned char* p = pos;
+    unsigned char* end = pos + len;
+
+    while (p != end) {
+        if (p + 4 > end)
+            break;
+        if (p[0] == 0 && p[1] == 0 && p[2] == 0 && p[3] == 1)
+            return p;
+        else
+            p += 1;
+    }
+    return NULL;
+}
+
+void rtsp_send_data_for_channel(struct rtsp_server_context* server, int chn, const unsigned char* data, const int len, unsigned long long pts)
+{
+    int i = 0;
+    unsigned char* pos = data;
+    unsigned char* end = data + len;
+    int rest = len;
+    unsigned char* next_start;
+
+    do {
+        next_start = find_start_code(pos + 4, rest - 4);
+        if (next_start) {
+            rtp_push_data(server, pos, next_start - pos, pts);
+            i++;
+            rest = rest - (next_start - pos);
+            pos = next_start;
+        } else { /* reach the end of data */
+            rtp_push_data(server, pos, end - pos, pts);
+        }
+    } while (next_start != NULL);
+}

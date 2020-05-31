@@ -32,7 +32,6 @@ static uint32_t s_avc_track = 0xFFFFFFFF;
 static uint32_t s_av1_track = 0xFFFFFFFF;
 static uint32_t s_hevc_track = 0xFFFFFFFF;
 
-void send_data_for_channel(int chn, const unsigned char* data, const int len, unsigned long long pts);
 
 static inline const char* ftimestamp(uint32_t t, char* buf)
 {
@@ -74,7 +73,7 @@ static void onread(void* flv, uint32_t track, const void* buffer, size_t bytes, 
         int n = h264_mp4toannexb(&s_avc, buffer, bytes, s_packet, sizeof(s_packet));
         if (n > 0) {
             pts = get_timems();
-            send_data_for_channel(0, s_packet, n, (unsigned long long int)pts);
+            rtsp_send_data_for_channel(g_rtsp_servers[0], 0, s_packet, n, (unsigned long long int)pts);
         }
 
 

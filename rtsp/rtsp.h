@@ -21,5 +21,6 @@ void rtsp_set_event_cb(void (*cb)(int event));
 struct rtsp_server_context* rtsp_start_server(enum RTSP_STREAM_TYPE stream_type, int port);
 void rtsp_stop_server(struct rtsp_server_context* server);
 void rtp_push_data(struct rtsp_server_context* server, void* data, int size, unsigned long long pts);
+void rtsp_send_data_for_channel(struct rtsp_server_context* server, int chn, const unsigned char* data, const int len, unsigned long long pts);
 
 #endif

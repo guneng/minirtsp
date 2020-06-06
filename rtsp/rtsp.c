@@ -250,6 +250,8 @@ void* rtp_tcp_server_thread(void* arg)
                 free(client_ctx);
             }
             pthread_attr_destroy(&attr);
+        } else {
+            sleep(2);
         }
     }
     close(server_ctx->sd);

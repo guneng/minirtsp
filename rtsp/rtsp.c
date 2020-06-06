@@ -239,10 +239,17 @@ void* rtp_tcp_server_thread(void* arg)
             if (server_ctx->init_client)
                 server_ctx->init_client(client_ctx);
             rtp_list_add(server_ctx->client_list.prev, &client_ctx->link);
-            ret = pthread_create(&client_ctx->thread_id, NULL, client_thread_proc, client_ctx);
+
+
+            pthread_attr_t attr;
+            pthread_attr_init(&attr);
+            pthread_attr_setstacksize(&attr, 128*1024);
+            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            ret = pthread_create(&client_ctx->thread_id, &attr, client_thread_proc, client_ctx);
             if (ret < 0) {
                 free(client_ctx);
             }
+            pthread_attr_destroy(&attr);
         }
     }
     close(server_ctx->sd);
@@ -626,12 +633,18 @@ struct rtsp_server_context* rtsp_start_server(enum RTSP_STREAM_TYPE stream_type,
     server->init_client = init_rtsp_session;
     server->release_client = cleanup_rtsp_session;
 
-    ret = pthread_create(&server->thread_id, NULL, rtp_tcp_server_thread, server);
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 128*1024);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    
+    ret = pthread_create(&server->thread_id, &attr, rtp_tcp_server_thread, server);
     if (ret < 0) {
         debug("rtsp: failed to create rtsp server thread\n");
         free(server);
         return NULL;
     }
+    pthread_attr_destroy(&attr);
 
     return server;
 }

@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
+#include <sys/prctl.h>
 #include <errno.h>
 #include <pthread.h>
 #include <sys/time.h>
@@ -161,6 +161,8 @@ void* client_thread_proc(void* arg)
 {
     struct client_context* client_ctx = (struct client_context*)arg;
 
+    prctl(PR_SET_NAME, "rtsp-client", 0, 0, 0);
+
     while (client_ctx->server->stop == 0) {
         if (client_ctx->process_func) {
             if (client_ctx->process_func(client_ctx) < 0) {
@@ -173,12 +175,16 @@ void* client_thread_proc(void* arg)
                 free(client_ctx);
                 break;
             }
+        } else {
+            break;
         }
     }
 }
 
 void* rtp_tcp_server_thread(void* arg)
 {
+    prctl(PR_SET_NAME, "rtsp-server", 0, 0, 0);
+
     struct rtsp_server_context* server_ctx = (struct rtsp_server_context*)arg;
     struct sockaddr_in addr;
     int on;
